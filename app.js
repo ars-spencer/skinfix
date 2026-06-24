@@ -75,6 +75,151 @@ const RATING_GUIDE = [
   { value: 5, name: 'severe', desc: 'Widespread redness or heat across the area. Multiple inflamed bumps. Significant discomfort or pain.' },
 ];
 
+/* ---------------- redness index (Lab a* channel) ---------------- */
+// sRGB -> linear -> XYZ (D65) -> Lab a* (red-green axis). Same math as the standalone redness lab.
+function labA(r, g, b){
+  function toLinear(c){ c = c / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+  const rl = toLinear(r), gl = toLinear(g), bl = toLinear(b);
+  const X = rl * 0.4124 + gl * 0.3576 + bl * 0.1805;
+  const Y = rl * 0.2126 + gl * 0.7152 + bl * 0.0722;
+  const Xn = 0.95047, Yn = 1.0;
+  function f(t){ return t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116); }
+  return 500 * (f(X / Xn) - f(Y / Yn));
+}
+
+function computeBoxA(canvas, box){
+  const ctx = canvas.getContext('2d');
+  const x = Math.max(0, Math.round(box.x));
+  const y = Math.max(0, Math.round(box.y));
+  const w = Math.min(canvas.width - x, Math.round(box.w));
+  const h = Math.min(canvas.height - y, Math.round(box.h));
+  if (w <= 1 || h <= 1) return null;
+  const data = ctx.getImageData(x, y, w, h).data;
+  const totalPixels = w * h;
+  const stride = totalPixels > 20000 ? Math.ceil(totalPixels / 20000) : 1;
+  let sumA = 0, count = 0;
+  for (let i = 0; i < data.length; i += 4 * stride){
+    sumA += labA(data[i], data[i + 1], data[i + 2]);
+    count++;
+  }
+  return count ? sumA / count : null;
+}
+
+// remembers the last box position per side (left/right) so you don't redraw it every morning
+function rednessLocalKey(side){ return 'skinfix-redness-box-' + side; }
+function getRememberedBox(side){
+  try { const raw = localStorage.getItem(rednessLocalKey(side)); return raw ? JSON.parse(raw) : null; }
+  catch(e){ return null; }
+}
+function setRememberedBox(side, frac){
+  try { localStorage.setItem(rednessLocalKey(side), JSON.stringify(frac)); } catch(e){ /* ignore */ }
+}
+
+function loadImageFromDataUrl(dataUrl){
+  return new Promise(resolve => { const img = new Image(); img.onload = () => resolve(img); img.src = dataUrl; });
+}
+
+function currentRednessSide(){
+  return els.rednessSideRight.checked ? 'right' : 'left';
+}
+
+async function renderRednessCanvas(){
+  const side = currentRednessSide();
+  const src = side === 'left' ? currentPhotoLeft : currentPhotoRight;
+  const canvas = els.rednessCanvas;
+
+  if (!src){
+    canvas.width = 0; canvas.height = 0;
+    rednessImg = null; rednessBoxPx = null;
+    els.rednessReadout.textContent = 'upload a photo above, then drag a box over the spot you want to track.';
+    return;
+  }
+
+  rednessImg = await loadImageFromDataUrl(src);
+  const maxW = 320;
+  let w = rednessImg.width, h = rednessImg.height;
+  if (w > maxW){ h = h * (maxW / w); w = maxW; }
+  canvas.width = Math.round(w); canvas.height = Math.round(h);
+
+  // priority: this entry's own saved box for this side, else your remembered default for this side
+  const frac = (currentRedness && currentRedness.side === side && currentRedness.box)
+    ? currentRedness.box
+    : getRememberedBox(side);
+
+  if (frac){
+    rednessBoxPx = { x: frac.x * canvas.width, y: frac.y * canvas.height, w: frac.w * canvas.width, h: frac.h * canvas.height };
+    drawRednessCanvas();
+    measureRedness(side);
+  } else {
+    rednessBoxPx = null;
+    drawRednessCanvas();
+    els.rednessReadout.textContent = 'drag a box over the spot you want to track (cheek, nose, etc).';
+  }
+}
+
+function drawRednessCanvas(){
+  const canvas = els.rednessCanvas;
+  const ctx = canvas.getContext('2d');
+  if (!rednessImg) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(rednessImg, 0, 0, canvas.width, canvas.height);
+  if (rednessBoxPx){
+    ctx.strokeStyle = '#C4795C'; ctx.lineWidth = 2;
+    ctx.strokeRect(rednessBoxPx.x, rednessBoxPx.y, rednessBoxPx.w, rednessBoxPx.h);
+    ctx.fillStyle = 'rgba(196,121,92,0.18)';
+    ctx.fillRect(rednessBoxPx.x, rednessBoxPx.y, rednessBoxPx.w, rednessBoxPx.h);
+  }
+}
+
+function measureRedness(side){
+  const canvas = els.rednessCanvas;
+  if (!rednessBoxPx) return;
+  const value = computeBoxA(canvas, rednessBoxPx);
+  if (value === null) return;
+  const frac = {
+    x: rednessBoxPx.x / canvas.width, y: rednessBoxPx.y / canvas.height,
+    w: rednessBoxPx.w / canvas.width, h: rednessBoxPx.h / canvas.height
+  };
+  currentRedness = { side, value, box: frac };
+  setRememberedBox(side, frac);
+  els.rednessReadout.textContent = `redness: a* = ${value.toFixed(1)} (${side} side) — drag to redraw if the spot drifted.`;
+}
+
+function bindRednessCanvas(){
+  const canvas = els.rednessCanvas;
+  let dragging = false, startX = 0, startY = 0;
+  function getPos(e){
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+    return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
+  }
+  function down(e){
+    if (!rednessImg) return;
+    e.preventDefault();
+    const p = getPos(e); dragging = true; startX = p.x; startY = p.y;
+  }
+  function move(e){
+    if (!dragging) return;
+    e.preventDefault();
+    const p = getPos(e);
+    rednessBoxPx = { x: Math.min(startX, p.x), y: Math.min(startY, p.y), w: Math.abs(p.x - startX), h: Math.abs(p.y - startY) };
+    drawRednessCanvas();
+  }
+  function up(){
+    if (!dragging) return;
+    dragging = false;
+    if (rednessBoxPx && rednessBoxPx.w > 4 && rednessBoxPx.h > 4) measureRedness(currentRednessSide());
+  }
+  canvas.addEventListener('mousedown', down);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+  canvas.addEventListener('touchstart', down, { passive: false });
+  canvas.addEventListener('touchmove', move, { passive: false });
+  canvas.addEventListener('touchend', up);
+}
+
 /* ---------------- date helpers ---------------- */
 function fmtDate(d){
   const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
@@ -95,6 +240,9 @@ let currentSkincare = new Set();
 let currentRating = null;
 let currentPhotoLeft = null;
 let currentPhotoRight = null;
+let currentRedness = null; // { side, value, box: {x,y,w,h} as fractions 0-1 }
+let rednessImg = null;     // Image currently drawn on the redness canvas
+let rednessBoxPx = null;   // current box in canvas pixel coords
 let almanacMonthCursor = new Date(); // first of month being viewed
 let comparePicks = [];
 
@@ -128,6 +276,7 @@ async function init(){
   renderMiniHeatmap();
   renderAlmanac();
   renderTrend();
+  renderRednessTrend();
   renderSummary();
   renderGallery();
   renderRoutineTimeline();
@@ -165,6 +314,11 @@ function cacheEls(){
   els.photoPreviewRight = document.getElementById('photo-preview-right');
   els.photoRemoveLeft = document.getElementById('photo-remove-left');
   els.photoRemoveRight = document.getElementById('photo-remove-right');
+  els.rednessSideLeft = document.getElementById('redness-side-left');
+  els.rednessSideRight = document.getElementById('redness-side-right');
+  els.rednessCanvas = document.getElementById('redness-canvas');
+  els.rednessReadout = document.getElementById('redness-readout');
+  els.rednessTrendCanvas = document.getElementById('redness-trend-canvas');
   els.entryDelete = document.getElementById('entry-delete');
   els.saveStatus = document.getElementById('save-status');
 
@@ -216,7 +370,7 @@ function bindNav(){
 function switchTab(name){
   els.tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   els.views.forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
-  if (name === 'almanac'){ renderAlmanac(); renderTrend(); }
+  if (name === 'almanac'){ renderAlmanac(); renderTrend(); renderRednessTrend(); }
   if (name === 'summary'){ renderSummary(); }
   if (name === 'gallery'){ renderGallery(); }
   if (name === 'routine'){ renderRoutineTimeline(); }
@@ -260,6 +414,9 @@ function bindTodayForm(){
   bindPhotoSlot('left');
   bindPhotoSlot('right');
 
+  [els.rednessSideLeft, els.rednessSideRight].forEach(r => r.addEventListener('change', () => renderRednessCanvas()));
+  bindRednessCanvas();
+
   els.entryDate.addEventListener('change', () => loadEntryIntoForm(els.entryDate.value));
 
   els.entryForm.addEventListener('submit', async (e) => {
@@ -273,7 +430,7 @@ function bindTodayForm(){
     await dbDelete('entries', date);
     await refreshData();
     await loadEntryIntoForm(date);
-    renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderSummary(); renderGallery();
+    renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderRednessTrend(); renderSummary(); renderGallery();
     flashStatus(els.saveStatus, 'Entry deleted.');
   });
 }
@@ -287,11 +444,20 @@ function bindPhotoSlot(side){
     const dataUrl = await fileToCompressedDataUrl(file);
     if (side === 'left') currentPhotoLeft = dataUrl; else currentPhotoRight = dataUrl;
     showPhotoPreview(side, dataUrl);
+    if (!(currentRednessSide() === 'left' ? currentPhotoLeft : currentPhotoRight)){
+      (side === 'left' ? els.rednessSideLeft : els.rednessSideRight).checked = true;
+    }
+    renderRednessCanvas();
   });
   removeBtn.addEventListener('click', () => {
     if (side === 'left') currentPhotoLeft = null; else currentPhotoRight = null;
     input.value = '';
     (side === 'left' ? els.photoPreviewWrapLeft : els.photoPreviewWrapRight).hidden = true;
+    if (currentRednessSide() === side){
+      const otherHasPhoto = side === 'left' ? currentPhotoRight : currentPhotoLeft;
+      if (otherHasPhoto) (side === 'left' ? els.rednessSideRight : els.rednessSideLeft).checked = true;
+    }
+    renderRednessCanvas();
   });
 }
 
@@ -398,6 +564,8 @@ async function loadEntryIntoForm(date){
   currentRating = null;
   currentPhotoLeft = null;
   currentPhotoRight = null;
+  currentRedness = null;
+  els.rednessSideLeft.checked = true;
 
   els.entryFormTitle.textContent = date === todayStr() ? 'Log today' : `Log for ${date}`;
   els.entryNotes.value = '';
@@ -448,8 +616,13 @@ async function loadEntryIntoForm(date){
     });
     if (currentPhotoLeft) showPhotoPreview('left', currentPhotoLeft);
     if (currentPhotoRight) showPhotoPreview('right', currentPhotoRight);
+    if (entry.redness && typeof entry.redness.value === 'number'){
+      currentRedness = { side: entry.redness.side, value: entry.redness.value, box: entry.redness.box };
+      (entry.redness.side === 'right' ? els.rednessSideRight : els.rednessSideLeft).checked = true;
+    }
     els.entryDelete.hidden = false;
   }
+  await renderRednessCanvas();
 }
 
 async function saveEntry(){
@@ -462,13 +635,14 @@ async function saveEntry(){
     skincare: Array.from(currentSkincare),
     notes: els.entryNotes.value.trim(),
     photos: { left: currentPhotoLeft, right: currentPhotoRight },
+    redness: currentRedness ? { side: currentRedness.side, value: currentRedness.value, box: currentRedness.box } : null,
     updatedAt: new Date().toISOString()
   };
   await dbPut('entries', entry);
   await refreshData();
   els.entryDelete.hidden = false;
   flashStatus(els.saveStatus, `Saved ${date}.`);
-  renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderSummary(); renderGallery();
+  renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderRednessTrend(); renderSummary(); renderGallery();
 }
 
 function flashStatus(el, msg){
@@ -659,6 +833,91 @@ function renderTrend(){
   ctx.font = '10.5px IBM Plex Mono, monospace';
   ctx.fillText(rated[0].date, padding.l, H - 8);
   const lastLabel = rated[rated.length-1].date;
+  ctx.fillText(lastLabel, W - padding.r - ctx.measureText(lastLabel).width, H - 8);
+}
+
+function renderRednessTrend(){
+  const canvas = els.rednessTrendCanvas;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const data = allEntries
+    .filter(e => e.redness && typeof e.redness.value === 'number')
+    .sort((a, b) => a.date < b.date ? -1 : 1);
+
+  const padding = { l: 36, r: 14, t: 16, b: 26 };
+  ctx.strokeStyle = '#DCD3C5'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding.l, padding.t); ctx.lineTo(padding.l, H - padding.b); ctx.lineTo(W - padding.r, H - padding.b);
+  ctx.stroke();
+
+  if (data.length < 2){
+    ctx.fillStyle = '#6B6258';
+    ctx.font = '13px Inter, sans-serif';
+    ctx.fillText('Log a couple of redness readings to see a trend here.', padding.l + 10, H / 2);
+    return;
+  }
+
+  const values = data.map(e => e.redness.value);
+  let lo = Math.min(...values), hi = Math.max(...values);
+  if (hi - lo < 2){ const mid = (hi + lo) / 2; lo = mid - 2; hi = mid + 2; }
+  const span = hi - lo, pad = span * 0.15;
+  lo -= pad; hi += pad;
+
+  const plotW = W - padding.l - padding.r, plotH = H - padding.t - padding.b;
+  const xStep = plotW / (data.length - 1);
+
+  ctx.fillStyle = '#6B6258';
+  ctx.font = '11px IBM Plex Mono, monospace';
+  [lo, (lo + hi) / 2, hi].forEach(v => {
+    const y = H - padding.b - ((v - lo) / (hi - lo)) * plotH;
+    ctx.fillText(v.toFixed(1), 4, y + 3);
+    ctx.strokeStyle = '#EDE8DF';
+    ctx.beginPath(); ctx.moveTo(padding.l, y); ctx.lineTo(W - padding.r, y); ctx.stroke();
+  });
+
+  // mark routine-change days, same as the flare trend
+  const seen = new Set();
+  allRoutine.forEach(r => {
+    if (seen.has(r.date)) return;
+    seen.add(r.date);
+    let idx = data.findIndex(e => e.date >= r.date);
+    if (idx === -1) idx = data.length - 1;
+    const x = padding.l + idx * xStep;
+    ctx.save();
+    ctx.strokeStyle = '#C7A368'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(x, padding.t); ctx.lineTo(x, H - padding.b); ctx.stroke();
+    ctx.restore();
+  });
+
+  const windowSize = Math.min(3, data.length);
+  const rolling = data.map((e, i) => {
+    const start = Math.max(0, i - windowSize + 1);
+    const slice = data.slice(start, i + 1);
+    return slice.reduce((s, x) => s + x.redness.value, 0) / slice.length;
+  });
+
+  ctx.strokeStyle = '#7A8B66'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  rolling.forEach((v, i) => {
+    const x = padding.l + i * xStep;
+    const y = H - padding.b - ((v - lo) / (hi - lo)) * plotH;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = '#98AC80';
+  data.forEach((e, i) => {
+    const x = padding.l + i * xStep;
+    const y = H - padding.b - ((e.redness.value - lo) / (hi - lo)) * plotH;
+    ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill();
+  });
+
+  ctx.fillStyle = '#6B6258';
+  ctx.font = '10.5px IBM Plex Mono, monospace';
+  ctx.fillText(data[0].date, padding.l, H - 8);
+  const lastLabel = data[data.length - 1].date;
   ctx.fillText(lastLabel, W - padding.r - ctx.measureText(lastLabel).width, H - 8);
 }
 
@@ -938,7 +1197,7 @@ function bindSettings(){
       for (const e of (data.entries || [])) await dbPut('entries', e);
       for (const r of (data.routine || [])){ const { id, ...rest } = r; await dbPut('routine', rest); }
       await refreshData();
-      renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderSummary(); renderGallery(); renderRoutineTimeline();
+      renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderRednessTrend(); renderSummary(); renderGallery(); renderRoutineTimeline();
       flashStatus(els.settingsStatus, 'Import complete.');
     } catch (err){
       flashStatus(els.settingsStatus, 'Could not read that file — is it a Skinfix backup?');
@@ -952,7 +1211,7 @@ function bindSettings(){
     await dbClear('routine');
     await refreshData();
     await loadEntryIntoForm(els.entryDate.value);
-    renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderSummary(); renderGallery(); renderRoutineTimeline();
+    renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderRednessTrend(); renderSummary(); renderGallery(); renderRoutineTimeline();
     flashStatus(els.settingsStatus, 'All local data erased.');
   });
 }
