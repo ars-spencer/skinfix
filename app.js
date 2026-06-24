@@ -756,9 +756,24 @@ function renderAlmanac(){
   }
 }
 
+// Sizes a canvas's pixel buffer to match how big it's actually rendered on screen (which CSS controls
+// via width:100%), instead of the fixed width/height attributes in the HTML. Without this, a canvas with
+// width="600" stays 600px wide regardless of a narrow phone screen, and either overflows or gets cut off.
+// Also scales for devicePixelRatio so text stays crisp on retina/mobile screens.
+function fitCanvas(canvas, cssHeight){
+  const dpr = window.devicePixelRatio || 1;
+  const displayWidth = Math.round(canvas.clientWidth || canvas.parentElement.clientWidth || 320);
+  const displayHeight = Math.round(cssHeight || canvas.clientHeight || 200);
+  canvas.width = Math.round(displayWidth * dpr);
+  canvas.height = Math.round(displayHeight * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { width: displayWidth, height: displayHeight };
+}
+
 function renderTrend(){
+  const { width: W, height: H } = fitCanvas(els.trendCanvas, 220);
   const ctx = els.trendCanvas.getContext('2d');
-  const W = els.trendCanvas.width, H = els.trendCanvas.height;
   ctx.clearRect(0,0,W,H);
 
   const rated = allEntries.filter(e => typeof e.rating === 'number');
@@ -838,8 +853,8 @@ function renderTrend(){
 
 function renderRednessTrend(){
   const canvas = els.rednessTrendCanvas;
+  const { width: W, height: H } = fitCanvas(canvas, 180);
   const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
 
   const data = allEntries
@@ -1232,4 +1247,10 @@ function openLightbox(src, caption){
 function closeLightbox(){ els.lightbox.hidden = true; }
 
 /* ============================================================ */
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { renderTrend(); renderRednessTrend(); }, 150);
+});
+
 init();
