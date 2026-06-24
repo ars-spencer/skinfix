@@ -241,9 +241,11 @@ textarea{ resize: vertical; font-family: var(--font-body); }
 
 /* ---------- lightbox ---------- */
 .lightbox{
-  position:fixed; inset:0; background: rgba(46,42,36,0.92); display:flex; flex-direction:column;
+  position:fixed; inset:0; background: rgba(46,42,36,0.92); flex-direction:column;
   align-items:center; justify-content:center; z-index: 50; padding: 30px;
 }
+.lightbox:not([hidden]){ display:flex; }
+.lightbox[hidden]{ display:none; }
 .lightbox img{ max-width: 90vw; max-height: 78vh; border-radius: 8px; }
 .lightbox-caption{ color:#FBF9F6; font-family: var(--font-mono); font-size:13px; margin-top:12px; }
 .lightbox-close{
