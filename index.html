@@ -21,6 +21,7 @@
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="today">Today</button>
       <button class="tab" data-tab="almanac">Almanac</button>
+      <button class="tab" data-tab="summary">Summary</button>
       <button class="tab" data-tab="gallery">Gallery</button>
       <button class="tab" data-tab="routine">Routine Log</button>
       <button class="tab" data-tab="settings">Settings</button>
@@ -40,7 +41,10 @@
           </div>
 
           <div class="field">
-            <label>Flare level</label>
+            <div class="field-label-row">
+              <label>Flare level</label>
+              <button type="button" id="rating-guide-toggle" class="info-toggle" aria-expanded="false">what counts as each number?</button>
+            </div>
             <div class="dial-row" id="rating-dial" role="radiogroup" aria-label="Flare level, 1 calm to 5 severe">
               <button type="button" class="dial" data-value="1"><span class="dial-num">1</span><span class="dial-label">calm</span></button>
               <button type="button" class="dial" data-value="2"><span class="dial-num">2</span><span class="dial-label">mild</span></button>
@@ -48,6 +52,8 @@
               <button type="button" class="dial" data-value="4"><span class="dial-num">4</span><span class="dial-label">flared</span></button>
               <button type="button" class="dial" data-value="5"><span class="dial-num">5</span><span class="dial-label">severe</span></button>
             </div>
+            <p class="dial-hint" id="dial-hint" aria-live="polite">Tap a number, or check the guide if you're not sure which one fits.</p>
+            <div class="rating-guide" id="rating-guide" hidden></div>
             <input type="hidden" id="rating-value" value="">
           </div>
 
@@ -70,17 +76,49 @@
           </div>
 
           <div class="field">
-            <label for="entry-notes">Notes</label>
-            <textarea id="entry-notes" rows="3" placeholder="anything worth remembering — products used, how skin felt, what you ate, etc."></textarea>
+            <label>Skincare used today</label>
+            <div class="chip-row" id="skincare-chips">
+              <button type="button" class="chip" data-skincare="versed-cleanser">Versed Purist Cleanser</button>
+              <button type="button" class="chip" data-skincare="lrp-toleriane">La Roche-Posay Toleriane</button>
+              <button type="button" class="chip" data-skincare="hypochlorous-spray">Hypochlorous acid spray</button>
+              <button type="button" class="chip" data-skincare="snail-mucin">Snail mucin</button>
+              <button type="button" class="chip" data-skincare="boyma-gel">Boyma hydrating gel</button>
+              <button type="button" class="chip" data-skincare="gm-sunscreen">Good Molecules sunscreen</button>
+              <button type="button" class="chip" data-skincare="milky-toner">Milky toner</button>
+              <button type="button" class="chip" data-skincare="345-relief-cream">345 Relief Cream</button>
+              <button type="button" class="chip" data-skincare="gm-ceramide-cream">Good Molecules ceramide cream</button>
+              <button type="button" class="chip" data-skincare="345-relief-mist">345 Relief Mist</button>
+              <button type="button" class="chip" data-skincare="azelaic-acid">Azelaic Acid 10%</button>
+            </div>
+            <div class="custom-trigger-row">
+              <input type="text" id="custom-skincare-input" placeholder="add a product…" maxlength="40">
+              <button type="button" id="add-custom-skincare" class="btn-ghost">add</button>
+            </div>
           </div>
 
           <div class="field">
-            <label>Photo <span class="hint">(same spot, same light, helps the most)</span></label>
-            <div class="photo-input-row">
-              <input type="file" id="entry-photo" accept="image/*" capture="environment">
-              <div class="photo-preview-wrap" id="photo-preview-wrap" hidden>
-                <img id="photo-preview" alt="preview of today's photo">
-                <button type="button" id="photo-remove" class="btn-ghost small">remove</button>
+            <label for="entry-notes">Notes</label>
+            <textarea id="entry-notes" rows="3" placeholder="anything worth remembering — how skin felt, what you ate, etc."></textarea>
+          </div>
+
+          <div class="field">
+            <label>Photos <span class="hint">(same spot, same light, helps the most)</span></label>
+            <div class="photo-pair">
+              <div class="photo-slot">
+                <span class="photo-slot-label">left side</span>
+                <input type="file" id="entry-photo-left" accept="image/*" capture="environment">
+                <div class="photo-preview-wrap" id="photo-preview-wrap-left" hidden>
+                  <img id="photo-preview-left" alt="preview of today's left-side photo">
+                  <button type="button" id="photo-remove-left" class="btn-ghost small">remove</button>
+                </div>
+              </div>
+              <div class="photo-slot">
+                <span class="photo-slot-label">right side</span>
+                <input type="file" id="entry-photo-right" accept="image/*" capture="environment">
+                <div class="photo-preview-wrap" id="photo-preview-wrap-right" hidden>
+                  <img id="photo-preview-right" alt="preview of today's right-side photo">
+                  <button type="button" id="photo-remove-right" class="btn-ghost small">remove</button>
+                </div>
               </div>
             </div>
           </div>
@@ -138,16 +176,29 @@
         </div>
       </div>
 
+      <div class="card">
+        <h2>Flare trend</h2>
+        <p class="card-sub">rolling average, so single bad days don't dominate the read. gold dashed lines mark days you logged a routine change.</p>
+        <canvas id="trend-canvas" width="600" height="220" role="img" aria-label="line chart of flare level trend over time"></canvas>
+      </div>
+    </section>
+
+    <!-- SUMMARY -->
+    <section class="view" id="view-summary">
+      <div class="card">
+        <h2>The short version</h2>
+        <p class="card-sub" id="summary-insight">Keep logging — once you've got a couple of weeks in, this will start telling you something.</p>
+      </div>
       <div class="grid-two">
         <div class="card">
-          <h2>Flare trend</h2>
-          <p class="card-sub">rolling average, so single bad days don't dominate the read.</p>
-          <canvas id="trend-canvas" width="600" height="220" role="img" aria-label="line chart of flare level trend over time"></canvas>
+          <h2>Trigger patterns</h2>
+          <p class="card-sub">avg flare level on days each trigger was logged, vs. days it wasn't. worst offenders first.</p>
+          <div id="trigger-bars" class="trigger-bars"></div>
         </div>
         <div class="card">
-          <h2>Trigger patterns</h2>
-          <p class="card-sub">avg flare level on days each trigger was logged, vs. days it wasn't.</p>
-          <div id="trigger-bars" class="trigger-bars"></div>
+          <h2>What helped</h2>
+          <p class="card-sub">avg flare level on days each product was used, vs. days it wasn't. calmest first — a pattern worth watching, not proof.</p>
+          <div id="skincare-bars" class="trigger-bars"></div>
         </div>
       </div>
     </section>
@@ -162,7 +213,7 @@
             compare mode
           </label>
         </div>
-        <p class="card-sub" id="gallery-hint">scroll through your photos in order. toggle compare mode to pick two and view them side by side.</p>
+        <p class="card-sub" id="gallery-hint">scroll through your photos in order — tap a thumbnail to view it larger. toggle compare mode to pick two days and view left/right side by side.</p>
         <div id="gallery-strip" class="gallery-strip"></div>
         <div id="compare-panel" class="compare-panel" hidden></div>
       </div>
@@ -227,8 +278,9 @@
         <h2>About this log</h2>
         <p class="card-sub">
           Built for tracking suspected papulopustular rosacea day to day — flare severity, possible triggers
-          (heat, alcohol, spicy food, stress, sleep, dairy), and routine changes — so patterns are easier to see
-          than they are to remember. Not a diagnostic tool, and not a substitute for an in-person dermatology visit.
+          (heat, alcohol, spicy food, stress, sleep, dairy), what skincare you actually used, and routine changes
+          over time — so patterns are easier to see than they are to remember. Not a diagnostic tool, and not a
+          substitute for an in-person dermatology visit.
         </p>
       </div>
     </section>
