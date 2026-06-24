@@ -64,6 +64,17 @@ function dbClear(store){
   });
 }
 
+/* ---------------- flare level anchors ---------------- */
+// Concrete, physical anchors instead of vague adjectives — meant to make day-to-day
+// rating consistent even when it's hard to judge in the moment.
+const RATING_GUIDE = [
+  { value: 1, name: 'calm', desc: 'Skin tone close to your normal baseline. No burning, stinging, or tightness. No visible bumps.' },
+  { value: 2, name: 'mild', desc: 'Slight pink or warmth in your usual spots (cheeks/nose). Skin may feel a little tight or sensitive. No new bumps.' },
+  { value: 3, name: 'noticeable', desc: 'Redness clearly beyond your baseline. Maybe 1–2 small bumps. Mild burning, or skin reacts more than usual to products or touch.' },
+  { value: 4, name: 'flared', desc: 'Clear redness or visible swelling. Several bumps or pustules. Burning/stinging that\'s hard to ignore.' },
+  { value: 5, name: 'severe', desc: 'Widespread redness or heat across the area. Multiple inflamed bumps. Significant discomfort or pain.' },
+];
+
 /* ---------------- date helpers ---------------- */
 function fmtDate(d){
   const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
@@ -80,10 +91,19 @@ function addDays(d, n){ const r = new Date(d); r.setDate(r.getDate()+n); return 
 let allEntries = [];   // array of entry objects, refreshed from DB
 let allRoutine = [];
 let currentTriggers = new Set();
+let currentSkincare = new Set();
 let currentRating = null;
-let currentPhotoDataUrl = null;
+let currentPhotoLeft = null;
+let currentPhotoRight = null;
 let almanacMonthCursor = new Date(); // first of month being viewed
 let comparePicks = [];
+
+// Backward-compatible photo reader: older entries stored a single `photo` field.
+function getEntryPhotos(entry){
+  if (!entry) return { left: null, right: null };
+  if (entry.photos) return { left: entry.photos.left || null, right: entry.photos.right || null };
+  return { left: entry.photo || null, right: null };
+}
 
 const els = {};
 
@@ -108,7 +128,7 @@ async function init(){
   renderMiniHeatmap();
   renderAlmanac();
   renderTrend();
-  renderTriggerBars();
+  renderSummary();
   renderGallery();
   renderRoutineTimeline();
 }
@@ -126,15 +146,25 @@ function cacheEls(){
   els.entryFormTitle = document.getElementById('entry-form-title');
   els.entryDate = document.getElementById('entry-date');
   els.dialRow = document.getElementById('rating-dial');
+  els.dialHint = document.getElementById('dial-hint');
+  els.ratingGuideToggle = document.getElementById('rating-guide-toggle');
+  els.ratingGuide = document.getElementById('rating-guide');
   els.ratingValue = document.getElementById('rating-value');
   els.chipRow = document.getElementById('trigger-chips');
   els.customTriggerInput = document.getElementById('custom-trigger-input');
   els.addCustomTrigger = document.getElementById('add-custom-trigger');
+  els.skincareChipRow = document.getElementById('skincare-chips');
+  els.customSkincareInput = document.getElementById('custom-skincare-input');
+  els.addCustomSkincare = document.getElementById('add-custom-skincare');
   els.entryNotes = document.getElementById('entry-notes');
-  els.entryPhoto = document.getElementById('entry-photo');
-  els.photoPreviewWrap = document.getElementById('photo-preview-wrap');
-  els.photoPreview = document.getElementById('photo-preview');
-  els.photoRemove = document.getElementById('photo-remove');
+  els.entryPhotoLeft = document.getElementById('entry-photo-left');
+  els.entryPhotoRight = document.getElementById('entry-photo-right');
+  els.photoPreviewWrapLeft = document.getElementById('photo-preview-wrap-left');
+  els.photoPreviewWrapRight = document.getElementById('photo-preview-wrap-right');
+  els.photoPreviewLeft = document.getElementById('photo-preview-left');
+  els.photoPreviewRight = document.getElementById('photo-preview-right');
+  els.photoRemoveLeft = document.getElementById('photo-remove-left');
+  els.photoRemoveRight = document.getElementById('photo-remove-right');
   els.entryDelete = document.getElementById('entry-delete');
   els.saveStatus = document.getElementById('save-status');
 
@@ -149,6 +179,8 @@ function cacheEls(){
   els.monthNext = document.getElementById('month-next');
   els.trendCanvas = document.getElementById('trend-canvas');
   els.triggerBars = document.getElementById('trigger-bars');
+  els.skincareBars = document.getElementById('skincare-bars');
+  els.summaryInsight = document.getElementById('summary-insight');
 
   els.compareMode = document.getElementById('compare-mode');
   els.galleryStrip = document.getElementById('gallery-strip');
@@ -184,7 +216,8 @@ function bindNav(){
 function switchTab(name){
   els.tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   els.views.forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
-  if (name === 'almanac'){ renderAlmanac(); renderTrend(); renderTriggerBars(); }
+  if (name === 'almanac'){ renderAlmanac(); renderTrend(); }
+  if (name === 'summary'){ renderSummary(); }
   if (name === 'gallery'){ renderGallery(); }
   if (name === 'routine'){ renderRoutineTimeline(); }
 }
@@ -193,11 +226,20 @@ function switchTab(name){
    TODAY / ENTRY FORM
    ============================================================ */
 function bindTodayForm(){
+  renderRatingGuide();
+  els.ratingGuideToggle.addEventListener('click', () => {
+    const open = els.ratingGuide.hidden;
+    els.ratingGuide.hidden = !open;
+    els.ratingGuideToggle.setAttribute('aria-expanded', String(open));
+    els.ratingGuideToggle.textContent = open ? 'hide the guide' : "what counts as each number?";
+  });
+
   els.dialRow.querySelectorAll('.dial').forEach(btn => {
     btn.addEventListener('click', () => {
       currentRating = Number(btn.dataset.value);
       els.ratingValue.value = currentRating;
       els.dialRow.querySelectorAll('.dial').forEach(b => b.classList.toggle('selected', b === btn));
+      updateDialHint(currentRating);
     });
   });
 
@@ -208,17 +250,15 @@ function bindTodayForm(){
     if (e.key === 'Enter'){ e.preventDefault(); addCustomTriggerChip(); }
   });
 
-  els.entryPhoto.addEventListener('change', async () => {
-    const file = els.entryPhoto.files[0];
-    if (!file) return;
-    currentPhotoDataUrl = await fileToCompressedDataUrl(file);
-    showPhotoPreview(currentPhotoDataUrl);
+  els.skincareChipRow.querySelectorAll('.chip').forEach(chip => bindSkincareChip(chip));
+
+  els.addCustomSkincare.addEventListener('click', () => addCustomSkincareChip());
+  els.customSkincareInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter'){ e.preventDefault(); addCustomSkincareChip(); }
   });
-  els.photoRemove.addEventListener('click', () => {
-    currentPhotoDataUrl = null;
-    els.entryPhoto.value = '';
-    els.photoPreviewWrap.hidden = true;
-  });
+
+  bindPhotoSlot('left');
+  bindPhotoSlot('right');
 
   els.entryDate.addEventListener('change', () => loadEntryIntoForm(els.entryDate.value));
 
@@ -233,9 +273,44 @@ function bindTodayForm(){
     await dbDelete('entries', date);
     await refreshData();
     await loadEntryIntoForm(date);
-    renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderTriggerBars(); renderGallery();
+    renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderSummary(); renderGallery();
     flashStatus(els.saveStatus, 'Entry deleted.');
   });
+}
+
+function bindPhotoSlot(side){
+  const input = side === 'left' ? els.entryPhotoLeft : els.entryPhotoRight;
+  const removeBtn = side === 'left' ? els.photoRemoveLeft : els.photoRemoveRight;
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+    const dataUrl = await fileToCompressedDataUrl(file);
+    if (side === 'left') currentPhotoLeft = dataUrl; else currentPhotoRight = dataUrl;
+    showPhotoPreview(side, dataUrl);
+  });
+  removeBtn.addEventListener('click', () => {
+    if (side === 'left') currentPhotoLeft = null; else currentPhotoRight = null;
+    input.value = '';
+    (side === 'left' ? els.photoPreviewWrapLeft : els.photoPreviewWrapRight).hidden = true;
+  });
+}
+
+function renderRatingGuide(){
+  els.ratingGuide.innerHTML = RATING_GUIDE.map(g => `
+    <div class="rg-row">
+      <span class="rg-num">${g.value}</span>
+      <span>
+        <span class="rg-name">${g.name}</span>
+        <span class="rg-desc">${g.desc}</span>
+      </span>
+    </div>
+  `).join('');
+}
+
+function updateDialHint(rating){
+  if (!rating){ els.dialHint.textContent = "Tap a number, or check the guide if you're not sure which one fits."; return; }
+  const g = RATING_GUIDE.find(r => r.value === rating);
+  els.dialHint.textContent = g ? `${g.value} · ${g.name} — ${g.desc}` : '';
 }
 
 function bindChip(chip){
@@ -264,6 +339,32 @@ function addCustomTriggerChip(){
   els.customTriggerInput.value = '';
 }
 
+function bindSkincareChip(chip){
+  chip.addEventListener('click', () => {
+    const key = chip.dataset.skincare;
+    if (currentSkincare.has(key)){ currentSkincare.delete(key); chip.classList.remove('selected'); }
+    else { currentSkincare.add(key); chip.classList.add('selected'); }
+  });
+}
+
+function addCustomSkincareChip(){
+  const raw = els.customSkincareInput.value.trim();
+  if (!raw) return;
+  const key = raw.toLowerCase().replace(/\s+/g, '-');
+  if (!els.skincareChipRow.querySelector(`[data-skincare="${key}"]`)){
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip selected';
+    chip.dataset.skincare = key;
+    chip.textContent = raw;
+    els.skincareChipRow.appendChild(chip);
+    bindSkincareChip(chip);
+  }
+  currentSkincare.add(key);
+  els.skincareChipRow.querySelector(`[data-skincare="${key}"]`).classList.add('selected');
+  els.customSkincareInput.value = '';
+}
+
 // downscale photos before storing so IndexedDB doesn't balloon over months of daily photos
 function fileToCompressedDataUrl(file, maxDim = 900, quality = 0.82){
   return new Promise((resolve, reject) => {
@@ -285,35 +386,45 @@ function fileToCompressedDataUrl(file, maxDim = 900, quality = 0.82){
   });
 }
 
-function showPhotoPreview(dataUrl){
-  els.photoPreview.src = dataUrl;
-  els.photoPreviewWrap.hidden = false;
+function showPhotoPreview(side, dataUrl){
+  if (side === 'left'){ els.photoPreviewLeft.src = dataUrl; els.photoPreviewWrapLeft.hidden = false; }
+  else { els.photoPreviewRight.src = dataUrl; els.photoPreviewWrapRight.hidden = false; }
 }
 
 async function loadEntryIntoForm(date){
   const entry = await dbGet('entries', date);
   currentTriggers = new Set();
+  currentSkincare = new Set();
   currentRating = null;
-  currentPhotoDataUrl = null;
+  currentPhotoLeft = null;
+  currentPhotoRight = null;
 
   els.entryFormTitle.textContent = date === todayStr() ? 'Log today' : `Log for ${date}`;
   els.entryNotes.value = '';
-  els.entryPhoto.value = '';
-  els.photoPreviewWrap.hidden = true;
+  els.entryPhotoLeft.value = '';
+  els.entryPhotoRight.value = '';
+  els.photoPreviewWrapLeft.hidden = true;
+  els.photoPreviewWrapRight.hidden = true;
   els.ratingValue.value = '';
   els.dialRow.querySelectorAll('.dial').forEach(b => b.classList.remove('selected'));
+  updateDialHint(null);
   els.chipRow.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
+  els.skincareChipRow.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
   els.entryDelete.hidden = true;
 
   if (entry){
     currentRating = entry.rating || null;
-    currentPhotoDataUrl = entry.photo || null;
+    const photos = getEntryPhotos(entry);
+    currentPhotoLeft = photos.left;
+    currentPhotoRight = photos.right;
     currentTriggers = new Set(entry.triggers || []);
+    currentSkincare = new Set(entry.skincare || []);
     els.entryNotes.value = entry.notes || '';
     if (currentRating){
       els.ratingValue.value = currentRating;
       const btn = els.dialRow.querySelector(`[data-value="${currentRating}"]`);
       if (btn) btn.classList.add('selected');
+      updateDialHint(currentRating);
     }
     currentTriggers.forEach(key => {
       let chip = els.chipRow.querySelector(`[data-trigger="${key}"]`);
@@ -325,7 +436,18 @@ async function loadEntryIntoForm(date){
       }
       chip.classList.add('selected');
     });
-    if (currentPhotoDataUrl) showPhotoPreview(currentPhotoDataUrl);
+    currentSkincare.forEach(key => {
+      let chip = els.skincareChipRow.querySelector(`[data-skincare="${key}"]`);
+      if (!chip){
+        chip = document.createElement('button');
+        chip.type = 'button'; chip.className = 'chip'; chip.dataset.skincare = key; chip.textContent = key.replace(/-/g,' ');
+        els.skincareChipRow.appendChild(chip);
+        bindSkincareChip(chip);
+      }
+      chip.classList.add('selected');
+    });
+    if (currentPhotoLeft) showPhotoPreview('left', currentPhotoLeft);
+    if (currentPhotoRight) showPhotoPreview('right', currentPhotoRight);
     els.entryDelete.hidden = false;
   }
 }
@@ -337,15 +459,16 @@ async function saveEntry(){
     date,
     rating: currentRating,
     triggers: Array.from(currentTriggers),
+    skincare: Array.from(currentSkincare),
     notes: els.entryNotes.value.trim(),
-    photo: currentPhotoDataUrl,
+    photos: { left: currentPhotoLeft, right: currentPhotoRight },
     updatedAt: new Date().toISOString()
   };
   await dbPut('entries', entry);
   await refreshData();
   els.entryDelete.hidden = false;
   flashStatus(els.saveStatus, `Saved ${date}.`);
-  renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderTriggerBars(); renderGallery();
+  renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderSummary(); renderGallery();
 }
 
 function flashStatus(el, msg){
@@ -509,6 +632,22 @@ function renderTrend(){
   });
   ctx.stroke();
 
+  // mark days a routine change was logged, so shifts in the line can be eyeballed against them
+  const seenRoutineDates = new Set();
+  allRoutine.forEach(r => {
+    if (seenRoutineDates.has(r.date)) return;
+    seenRoutineDates.add(r.date);
+    let idx = rated.findIndex(e => e.date >= r.date);
+    if (idx === -1) idx = rated.length - 1;
+    const x = padding.l + idx * xStep;
+    ctx.save();
+    ctx.strokeStyle = '#C7A368';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(x, padding.t); ctx.lineTo(x, H - padding.b); ctx.stroke();
+    ctx.restore();
+  });
+
   ctx.fillStyle = '#C4795C';
   rated.forEach((e, i) => {
     const x = padding.l + i * xStep;
@@ -523,40 +662,103 @@ function renderTrend(){
   ctx.fillText(lastLabel, W - padding.r - ctx.measureText(lastLabel).width, H - 8);
 }
 
-function renderTriggerBars(){
-  const rated = allEntries.filter(e => typeof e.rating === 'number');
-  const triggerSet = new Set();
-  rated.forEach(e => (e.triggers||[]).forEach(t => triggerSet.add(t)));
+/* ============================================================
+   SUMMARY — trigger patterns, what helped, and a plain-language insight
+   ============================================================ */
 
-  els.triggerBars.innerHTML = '';
-  if (triggerSet.size === 0 || rated.length === 0){
-    els.triggerBars.innerHTML = '<p class="routine-empty">No trigger data yet — log a few days with triggers checked to see patterns.</p>';
+// shared correlation calc: for each tag found under `key` (triggers or skincare),
+// average flare level on days it was present vs. absent.
+function correlationRows(rated, key){
+  const set = new Set();
+  rated.forEach(e => (e[key]||[]).forEach(t => set.add(t)));
+  return Array.from(set).map(item => {
+    const withIt = rated.filter(e => (e[key]||[]).includes(item));
+    const withoutIt = rated.filter(e => !(e[key]||[]).includes(item));
+    const avgWith = withIt.length ? withIt.reduce((s,e)=>s+e.rating,0)/withIt.length : 0;
+    const avgWithout = withoutIt.length ? withoutIt.reduce((s,e)=>s+e.rating,0)/withoutIt.length : 0;
+    return { item, avgWith, avgWithout, n: withIt.length };
+  });
+}
+
+function renderBarRows(container, rows, emptyMsg){
+  container.innerHTML = '';
+  if (rows.length === 0){
+    container.innerHTML = `<p class="routine-empty">${emptyMsg}</p>`;
     return;
   }
-
-  const rows = Array.from(triggerSet).map(trig => {
-    const withT = rated.filter(e => (e.triggers||[]).includes(trig));
-    const withoutT = rated.filter(e => !(e.triggers||[]).includes(trig));
-    const avgWith = withT.length ? withT.reduce((s,e)=>s+e.rating,0)/withT.length : 0;
-    const avgWithout = withoutT.length ? withoutT.reduce((s,e)=>s+e.rating,0)/withoutT.length : 0;
-    return { trig, avgWith, avgWithout, n: withT.length };
-  }).sort((a,b) => b.avgWith - a.avgWith);
-
   rows.forEach(r => {
     const row = document.createElement('div');
     row.className = 'tbar-row';
     row.innerHTML = `
-      <span class="tbar-name">${r.trig.replace(/-/g,' ')}</span>
+      <span class="tbar-name">${r.item.replace(/-/g,' ')}</span>
       <div class="tbar-track"><div class="tbar-fill with" style="width:${(r.avgWith/5)*100}%"></div></div>
       <div class="tbar-track"><div class="tbar-fill without" style="width:${(r.avgWithout/5)*100}%"></div></div>
     `;
-    els.triggerBars.appendChild(row);
+    container.appendChild(row);
     const countNote = document.createElement('div');
     countNote.className = 'tbar-count';
-    countNote.style.gridColumn = '1 / -1';
     countNote.textContent = `${r.n} day(s) with — avg ${r.avgWith.toFixed(1)} · avg ${r.avgWithout.toFixed(1)} without`;
-    els.triggerBars.appendChild(countNote);
+    container.appendChild(countNote);
   });
+}
+
+function renderTriggerBars(){
+  const rated = allEntries.filter(e => typeof e.rating === 'number');
+  const rows = correlationRows(rated, 'triggers').sort((a,b) => b.avgWith - a.avgWith);
+  renderBarRows(els.triggerBars, rows, 'No trigger data yet — log a few days with triggers checked to see patterns.');
+}
+
+function renderSkincareBars(){
+  const rated = allEntries.filter(e => typeof e.rating === 'number');
+  const rows = correlationRows(rated, 'skincare').sort((a,b) => a.avgWith - b.avgWith);
+  renderBarRows(els.skincareBars, rows, 'No skincare data yet — log what you used on a few rated days to see patterns.');
+}
+
+function renderSummaryInsight(){
+  const rated = allEntries.filter(e => typeof e.rating === 'number').sort((a,b) => a.date < b.date ? -1 : 1);
+  const last14Cutoff = fmtDate(addDays(new Date(), -13));
+  const prev14Cutoff = fmtDate(addDays(new Date(), -27));
+  const last14 = rated.filter(e => e.date >= last14Cutoff);
+  const prev14 = rated.filter(e => e.date >= prev14Cutoff && e.date < last14Cutoff);
+
+  let lines = [];
+
+  if (last14.length < 3){
+    els.summaryInsight.textContent = "Keep logging — once you've got a couple of weeks of rated days in, this will start telling you something.";
+    return;
+  }
+
+  const avgLast = last14.reduce((s,e)=>s+e.rating,0) / last14.length;
+  if (prev14.length >= 3){
+    const avgPrev = prev14.reduce((s,e)=>s+e.rating,0) / prev14.length;
+    const diff = avgLast - avgPrev;
+    let trendWord = 'holding pretty steady';
+    if (diff <= -0.4) trendWord = 'trending calmer';
+    else if (diff >= 0.4) trendWord = 'trending more flared';
+    lines.push(`Over the last 14 days your average flare was ${avgLast.toFixed(1)}, vs. ${avgPrev.toFixed(1)} the 14 days before that — ${trendWord}.`);
+  } else {
+    lines.push(`Your average flare over the last 14 days is ${avgLast.toFixed(1)}.`);
+  }
+
+  const trigRows = correlationRows(rated, 'triggers').filter(r => r.n >= 3).sort((a,b) => b.avgWith - a.avgWith);
+  if (trigRows.length){
+    const top = trigRows[0];
+    lines.push(`The trigger most associated with worse days so far is ${top.item.replace(/-/g,' ')} (avg ${top.avgWith.toFixed(1)} vs ${top.avgWithout.toFixed(1)} without).`);
+  }
+
+  const skinRows = correlationRows(rated, 'skincare').filter(r => r.n >= 3).sort((a,b) => a.avgWith - b.avgWith);
+  if (skinRows.length){
+    const top = skinRows[0];
+    lines.push(`Days using ${top.item.replace(/-/g,' ')} have run calmer on average (${top.avgWith.toFixed(1)} vs ${top.avgWithout.toFixed(1)} without) — worth watching, not proof.`);
+  }
+
+  els.summaryInsight.textContent = lines.join(' ');
+}
+
+function renderSummary(){
+  renderSummaryInsight();
+  renderTriggerBars();
+  renderSkincareBars();
 }
 
 /* ============================================================
@@ -575,19 +777,34 @@ function bindGallery(){
 
 function renderGallery(){
   els.galleryStrip.innerHTML = '';
-  const withPhotos = allEntries.filter(e => e.photo);
+  const withPhotos = allEntries.filter(e => { const p = getEntryPhotos(e); return p.left || p.right; });
   if (withPhotos.length === 0){
     els.galleryStrip.innerHTML = '<p class="gallery-empty">No photos logged yet. Add one from the Today tab.</p>';
     return;
   }
   withPhotos.forEach(e => {
+    const { left, right } = getEntryPhotos(e);
     const item = document.createElement('div');
     item.className = 'gallery-item' + (comparePicks.includes(e.date) ? ' picked' : '');
-    item.innerHTML = `<img src="${e.photo}" alt="skin photo from ${e.date}">
-      <div class="g-date">${e.date}</div>
-      <div class="g-rating">${e.rating ? 'flare ' + e.rating : ''}</div>`;
-    item.addEventListener('click', () => {
-      if (els.compareMode.checked){
+
+    const photosWrap = document.createElement('div');
+    photosWrap.className = 'g-photos';
+    photosWrap.appendChild(makeThumb(left, `left side, ${e.date}`));
+    photosWrap.appendChild(makeThumb(right, `right side, ${e.date}`));
+    item.appendChild(photosWrap);
+
+    const dateEl = document.createElement('div');
+    dateEl.className = 'g-date';
+    dateEl.textContent = e.date;
+    item.appendChild(dateEl);
+
+    const ratingEl = document.createElement('div');
+    ratingEl.className = 'g-rating';
+    ratingEl.textContent = e.rating ? 'flare ' + e.rating : '';
+    item.appendChild(ratingEl);
+
+    if (els.compareMode.checked){
+      item.addEventListener('click', () => {
         if (comparePicks.includes(e.date)) comparePicks = comparePicks.filter(d => d !== e.date);
         else {
           comparePicks.push(e.date);
@@ -595,12 +812,27 @@ function renderGallery(){
         }
         renderGallery();
         renderComparePanel();
-      } else {
-        openLightbox(e.photo, `${e.date}${e.rating ? ' — flare ' + e.rating : ''}`);
-      }
-    });
+      });
+    }
     els.galleryStrip.appendChild(item);
   });
+}
+
+function makeThumb(src, label){
+  if (!src){
+    const empty = document.createElement('div');
+    empty.className = 'g-thumb-empty';
+    empty.textContent = '—';
+    return empty;
+  }
+  const img = document.createElement('img');
+  img.className = 'g-thumb';
+  img.src = src;
+  img.alt = label;
+  if (!els.compareMode.checked){
+    img.addEventListener('click', (e) => { e.stopPropagation(); openLightbox(src, label); });
+  }
+  return img;
 }
 
 function renderComparePanel(){
@@ -608,12 +840,32 @@ function renderComparePanel(){
   els.comparePanel.hidden = false;
   const sorted = [...comparePicks].sort();
   const entries = sorted.map(d => allEntries.find(e => e.date === d));
-  els.comparePanel.innerHTML = entries.map(e => `
-    <div class="compare-side">
-      <img src="${e.photo}" alt="skin photo from ${e.date}">
-      <div class="c-meta">${e.date} — ${e.rating ? 'flare ' + e.rating : 'no rating'}${e.triggers?.length ? '<br>' + e.triggers.join(', ') : ''}</div>
+  const photoPairs = entries.map(e => getEntryPhotos(e));
+
+  const cell = (src, label) => src
+    ? `<img src="${src}" alt="${label}">`
+    : `<div class="cg-empty">no photo</div>`;
+
+  els.comparePanel.innerHTML = `
+    <div class="compare-grid">
+      <span class="cg-corner"></span>
+      <span class="cg-col-label">${entries[0].date}</span>
+      <span class="cg-col-label">${entries[1].date}</span>
+
+      <span class="cg-row-label">left</span>
+      ${cell(photoPairs[0].left, 'left side, ' + entries[0].date)}
+      ${cell(photoPairs[1].left, 'left side, ' + entries[1].date)}
+
+      <span class="cg-row-label">right</span>
+      ${cell(photoPairs[0].right, 'right side, ' + entries[0].date)}
+      ${cell(photoPairs[1].right, 'right side, ' + entries[1].date)}
     </div>
-  `).join('');
+    <div class="compare-meta">
+      ${entries[0].date}: ${entries[0].rating ? 'flare ' + entries[0].rating : 'no rating'}${entries[0].triggers?.length ? ' · ' + entries[0].triggers.join(', ') : ''}
+      &nbsp;vs.&nbsp;
+      ${entries[1].date}: ${entries[1].rating ? 'flare ' + entries[1].rating : 'no rating'}${entries[1].triggers?.length ? ' · ' + entries[1].triggers.join(', ') : ''}
+    </div>
+  `;
 }
 
 /* ============================================================
@@ -686,7 +938,7 @@ function bindSettings(){
       for (const e of (data.entries || [])) await dbPut('entries', e);
       for (const r of (data.routine || [])){ const { id, ...rest } = r; await dbPut('routine', rest); }
       await refreshData();
-      renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderTriggerBars(); renderGallery(); renderRoutineTimeline();
+      renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderSummary(); renderGallery(); renderRoutineTimeline();
       flashStatus(els.settingsStatus, 'Import complete.');
     } catch (err){
       flashStatus(els.settingsStatus, 'Could not read that file — is it a Skinfix backup?');
@@ -700,7 +952,7 @@ function bindSettings(){
     await dbClear('routine');
     await refreshData();
     await loadEntryIntoForm(els.entryDate.value);
-    renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderTriggerBars(); renderGallery(); renderRoutineTimeline();
+    renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderSummary(); renderGallery(); renderRoutineTimeline();
     flashStatus(els.settingsStatus, 'All local data erased.');
   });
 }
