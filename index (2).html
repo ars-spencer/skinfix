@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skin Almanac — Rosacea Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <header class="app-header">
+    <div class="header-top">
+      <h1>Skin Almanac</h1>
+      <p class="subtitle">a quiet log for tracking rosacea, day by day</p>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="today">Today</button>
+      <button class="tab" data-tab="almanac">Almanac</button>
+      <button class="tab" data-tab="gallery">Gallery</button>
+      <button class="tab" data-tab="routine">Routine Log</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </nav>
+  </header>
+
+  <main id="views">
+
+    <!-- TODAY -->
+    <section class="view active" id="view-today">
+      <div class="grid-two">
+
+        <form id="entry-form" class="card">
+          <div class="card-head">
+            <h2 id="entry-form-title">Log today</h2>
+            <input type="date" id="entry-date" required>
+          </div>
+
+          <div class="field">
+            <label>Flare level</label>
+            <div class="dial-row" id="rating-dial" role="radiogroup" aria-label="Flare level, 1 calm to 5 severe">
+              <button type="button" class="dial" data-value="1"><span class="dial-num">1</span><span class="dial-label">calm</span></button>
+              <button type="button" class="dial" data-value="2"><span class="dial-num">2</span><span class="dial-label">mild</span></button>
+              <button type="button" class="dial" data-value="3"><span class="dial-num">3</span><span class="dial-label">noticeable</span></button>
+              <button type="button" class="dial" data-value="4"><span class="dial-num">4</span><span class="dial-label">flared</span></button>
+              <button type="button" class="dial" data-value="5"><span class="dial-num">5</span><span class="dial-label">severe</span></button>
+            </div>
+            <input type="hidden" id="rating-value" value="">
+          </div>
+
+          <div class="field">
+            <label>Possible triggers today</label>
+            <div class="chip-row" id="trigger-chips">
+              <button type="button" class="chip" data-trigger="heat">heat</button>
+              <button type="button" class="chip" data-trigger="alcohol">alcohol</button>
+              <button type="button" class="chip" data-trigger="spicy">spicy food</button>
+              <button type="button" class="chip" data-trigger="stress">stress</button>
+              <button type="button" class="chip" data-trigger="sleep">poor sleep</button>
+              <button type="button" class="chip" data-trigger="dairy">dairy</button>
+              <button type="button" class="chip" data-trigger="sun">sun exposure</button>
+              <button type="button" class="chip" data-trigger="workout">sweat/workout</button>
+            </div>
+            <div class="custom-trigger-row">
+              <input type="text" id="custom-trigger-input" placeholder="add a custom trigger…" maxlength="30">
+              <button type="button" id="add-custom-trigger" class="btn-ghost">add</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="entry-notes">Notes</label>
+            <textarea id="entry-notes" rows="3" placeholder="anything worth remembering — products used, how skin felt, what you ate, etc."></textarea>
+          </div>
+
+          <div class="field">
+            <label>Photo <span class="hint">(same spot, same light, helps the most)</span></label>
+            <div class="photo-input-row">
+              <input type="file" id="entry-photo" accept="image/*" capture="environment">
+              <div class="photo-preview-wrap" id="photo-preview-wrap" hidden>
+                <img id="photo-preview" alt="preview of today's photo">
+                <button type="button" id="photo-remove" class="btn-ghost small">remove</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save entry</button>
+            <button type="button" id="entry-delete" class="btn-danger" hidden>Delete this day's entry</button>
+          </div>
+          <p class="save-status" id="save-status" aria-live="polite"></p>
+        </form>
+
+        <div class="card side-card">
+          <h2>Where things stand</h2>
+          <div id="stats-block" class="stats-block">
+            <div class="stat">
+              <span class="stat-num" id="stat-streak">—</span>
+              <span class="stat-label">days logged in a row</span>
+            </div>
+            <div class="stat">
+              <span class="stat-num" id="stat-avg14">—</span>
+              <span class="stat-label">avg flare, last 14 days</span>
+            </div>
+            <div class="stat">
+              <span class="stat-num" id="stat-total">—</span>
+              <span class="stat-label">total entries</span>
+            </div>
+          </div>
+          <div class="mini-almanac-wrap">
+            <p class="mini-label">last 28 days</p>
+            <div id="mini-heatmap" class="mini-heatmap"></div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ALMANAC -->
+    <section class="view" id="view-almanac">
+      <div class="card">
+        <div class="card-head">
+          <h2>The almanac</h2>
+          <div class="month-nav">
+            <button id="month-prev" class="btn-ghost small" aria-label="previous month">←</button>
+            <span id="month-label" class="month-label"></span>
+            <button id="month-next" class="btn-ghost small" aria-label="next month">→</button>
+          </div>
+        </div>
+        <p class="card-sub">each square is a day. deeper clay means more flared, sage means calm. click a day to open it.</p>
+        <div id="heatmap" class="heatmap"></div>
+        <div class="legend">
+          <span>calm</span>
+          <div class="legend-scale"><span></span><span></span><span></span><span></span><span></span></div>
+          <span>severe</span>
+          <span class="legend-empty-marker">○ no entry</span>
+        </div>
+      </div>
+
+      <div class="grid-two">
+        <div class="card">
+          <h2>Flare trend</h2>
+          <p class="card-sub">rolling average, so single bad days don't dominate the read.</p>
+          <canvas id="trend-canvas" width="600" height="220" role="img" aria-label="line chart of flare level trend over time"></canvas>
+        </div>
+        <div class="card">
+          <h2>Trigger patterns</h2>
+          <p class="card-sub">avg flare level on days each trigger was logged, vs. days it wasn't.</p>
+          <div id="trigger-bars" class="trigger-bars"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- GALLERY -->
+    <section class="view" id="view-gallery">
+      <div class="card">
+        <div class="card-head">
+          <h2>Photo timeline</h2>
+          <label class="compare-toggle">
+            <input type="checkbox" id="compare-mode">
+            compare mode
+          </label>
+        </div>
+        <p class="card-sub" id="gallery-hint">scroll through your photos in order. toggle compare mode to pick two and view them side by side.</p>
+        <div id="gallery-strip" class="gallery-strip"></div>
+        <div id="compare-panel" class="compare-panel" hidden></div>
+      </div>
+    </section>
+
+    <!-- ROUTINE LOG -->
+    <section class="view" id="view-routine">
+      <div class="grid-two">
+        <form id="routine-form" class="card">
+          <h2>Log a routine change</h2>
+          <div class="field">
+            <label for="routine-date">Date</label>
+            <input type="date" id="routine-date" required>
+          </div>
+          <div class="field">
+            <label for="routine-type">Change type</label>
+            <select id="routine-type">
+              <option value="started">started using</option>
+              <option value="stopped">stopped using</option>
+              <option value="adjusted">adjusted use of</option>
+              <option value="note">general note</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="routine-product">Product / step</label>
+            <input type="text" id="routine-product" placeholder="e.g. Good Molecules 10% Azelaic Acid" maxlength="80">
+          </div>
+          <div class="field">
+            <label for="routine-notes">Notes</label>
+            <textarea id="routine-notes" rows="2" placeholder="why the change, how applied, anything to watch for"></textarea>
+          </div>
+          <button type="submit" class="btn-primary">Add to log</button>
+        </form>
+
+        <div class="card side-card">
+          <h2>Timeline</h2>
+          <div id="routine-timeline" class="routine-timeline"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view" id="view-settings">
+      <div class="card">
+        <h2>Your data</h2>
+        <p class="card-sub">
+          Everything you log — photos included — stays in this browser's local storage on this device.
+          Nothing is uploaded anywhere, and publishing this app's code to GitHub does not publish your data.
+          Back up regularly, since clearing browser data or switching devices/browsers will lose what isn't exported.
+        </p>
+        <div class="settings-actions">
+          <button id="export-json" class="btn-primary">Export backup (.json)</button>
+          <label class="btn-ghost file-label">
+            Import backup
+            <input type="file" id="import-json" accept="application/json" hidden>
+          </label>
+          <button id="clear-all" class="btn-danger">Erase all local data</button>
+        </div>
+        <p class="save-status" id="settings-status" aria-live="polite"></p>
+      </div>
+      <div class="card">
+        <h2>About this log</h2>
+        <p class="card-sub">
+          Built for tracking suspected papulopustular rosacea day to day — flare severity, possible triggers
+          (heat, alcohol, spicy food, stress, sleep, dairy), and routine changes — so patterns are easier to see
+          than they are to remember. Not a diagnostic tool, and not a substitute for an in-person dermatology visit.
+        </p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- lightbox for single photo view -->
+<div id="lightbox" class="lightbox" hidden>
+  <button id="lightbox-close" class="lightbox-close" aria-label="close">×</button>
+  <img id="lightbox-img" alt="">
+  <div id="lightbox-caption" class="lightbox-caption"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
