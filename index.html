@@ -123,6 +123,18 @@
             </div>
           </div>
 
+          <div class="field" id="redness-field">
+            <label>Redness check <span class="hint">(optional)</span></label>
+            <div class="redness-side-row">
+              <label class="redness-radio"><input type="radio" name="redness-side" id="redness-side-left" value="left" checked> left photo</label>
+              <label class="redness-radio"><input type="radio" name="redness-side" id="redness-side-right" value="right"> right photo</label>
+            </div>
+            <div class="canvas-wrap" id="redness-canvas-wrap">
+              <canvas id="redness-canvas"></canvas>
+            </div>
+            <p class="redness-readout" id="redness-readout">upload a photo above, then drag a box over the spot you want to track.</p>
+          </div>
+
           <div class="form-actions">
             <button type="submit" class="btn-primary">Save entry</button>
             <button type="button" id="entry-delete" class="btn-danger" hidden>Delete this day's entry</button>
@@ -180,6 +192,12 @@
         <h2>Flare trend</h2>
         <p class="card-sub">rolling average, so single bad days don't dominate the read. gold dashed lines mark days you logged a routine change.</p>
         <canvas id="trend-canvas" width="600" height="220" role="img" aria-label="line chart of flare level trend over time"></canvas>
+      </div>
+
+      <div class="card">
+        <h2>Redness index</h2>
+        <p class="card-sub">a* value from the boxed region on your daily photo — tracks whichever side you measured each day, so stick to one side for the cleanest comparison.</p>
+        <canvas id="redness-trend-canvas" width="600" height="180" role="img" aria-label="line chart of redness index trend over time"></canvas>
       </div>
     </section>
 
