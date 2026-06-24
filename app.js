@@ -1,5 +1,5 @@
 /* ============================================================
-   Skin Almanac — local-only rosacea tracker
+   Skinfix — local-only rosacea tracker
    All data (including photos) lives in this browser's IndexedDB.
    Nothing is ever sent anywhere. Export regularly via Settings.
    ============================================================ */
@@ -670,7 +670,7 @@ function bindSettings(){
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `skin-almanac-backup-${todayStr()}.json`;
+    a.href = url; a.download = `skinfix-backup-${todayStr()}.json`;
     a.click();
     URL.revokeObjectURL(url);
     flashStatus(els.settingsStatus, 'Backup downloaded.');
@@ -689,7 +689,7 @@ function bindSettings(){
       renderStats(); renderMiniHeatmap(); renderAlmanac(); renderTrend(); renderTriggerBars(); renderGallery(); renderRoutineTimeline();
       flashStatus(els.settingsStatus, 'Import complete.');
     } catch (err){
-      flashStatus(els.settingsStatus, 'Could not read that file — is it a Skin Almanac backup?');
+      flashStatus(els.settingsStatus, 'Could not read that file — is it a Skinfix backup?');
     }
     els.importJson.value = '';
   });
