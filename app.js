@@ -954,38 +954,54 @@ function correlationRows(rated, key){
   });
 }
 
-function renderBarRows(container, rows, emptyMsg){
+function renderCorrRows(container, rows, emptyMsg){
   container.innerHTML = '';
   if (rows.length === 0){
     container.innerHTML = `<p class="routine-empty">${emptyMsg}</p>`;
     return;
   }
+  const legend = document.createElement('div');
+  legend.className = 'corr-legend';
+  legend.innerHTML = `<span><span class="dot with"></span>days with this</span><span><span class="dot without"></span>days without</span>`;
+  container.appendChild(legend);
+
+  const pct = v => ((Math.max(1, Math.min(5, v)) - 1) / 4) * 100;
+
   rows.forEach(r => {
+    const pWith = pct(r.avgWith), pWithout = pct(r.avgWithout);
+    const left = Math.min(pWith, pWithout), width = Math.abs(pWith - pWithout);
+    const diff = r.avgWith - r.avgWithout;
+    const deltaClass = diff > 0.05 ? 'worse' : (diff < -0.05 ? 'calmer' : 'flat');
+    const deltaWord = diff > 0.05 ? 'worse' : (diff < -0.05 ? 'calmer' : 'about the same');
+
     const row = document.createElement('div');
-    row.className = 'tbar-row';
+    row.className = 'corr-row';
     row.innerHTML = `
-      <span class="tbar-name">${r.item.replace(/-/g,' ')}</span>
-      <div class="tbar-track"><div class="tbar-fill with" style="width:${(r.avgWith/5)*100}%"></div></div>
-      <div class="tbar-track"><div class="tbar-fill without" style="width:${(r.avgWithout/5)*100}%"></div></div>
+      <div class="corr-name">${r.item.replace(/-/g,' ')}</div>
+      <div class="corr-track-wrap">
+        <div class="corr-track-line"></div>
+        <span class="corr-tick corr-tick-start">1</span>
+        <span class="corr-tick corr-tick-end">5</span>
+        <div class="corr-bridge" style="left:${left}%; width:${width}%"></div>
+        <div class="corr-dot without" style="left:${pWithout}%" title="without: ${r.avgWithout.toFixed(1)}"></div>
+        <div class="corr-dot with" style="left:${pWith}%" title="with: ${r.avgWith.toFixed(1)}"></div>
+      </div>
+      <p class="corr-delta ${deltaClass}"><span class="amt">${diff > 0 ? '+' : ''}${diff.toFixed(1)}</span> ${deltaWord} on the ${r.n} day(s) you logged this — avg ${r.avgWith.toFixed(1)} vs ${r.avgWithout.toFixed(1)} without</p>
     `;
     container.appendChild(row);
-    const countNote = document.createElement('div');
-    countNote.className = 'tbar-count';
-    countNote.textContent = `${r.n} day(s) with — avg ${r.avgWith.toFixed(1)} · avg ${r.avgWithout.toFixed(1)} without`;
-    container.appendChild(countNote);
   });
 }
 
 function renderTriggerBars(){
   const rated = allEntries.filter(e => typeof e.rating === 'number');
-  const rows = correlationRows(rated, 'triggers').sort((a,b) => b.avgWith - a.avgWith);
-  renderBarRows(els.triggerBars, rows, 'No trigger data yet — log a few days with triggers checked to see patterns.');
+  const rows = correlationRows(rated, 'triggers').filter(r => r.n >= 3).sort((a,b) => b.avgWith - a.avgWith);
+  renderCorrRows(els.triggerBars, rows, "Not enough repeats yet — once a trigger's been logged on 3+ different rated days, it'll show up here with a real comparison.");
 }
 
 function renderSkincareBars(){
   const rated = allEntries.filter(e => typeof e.rating === 'number');
-  const rows = correlationRows(rated, 'skincare').sort((a,b) => a.avgWith - b.avgWith);
-  renderBarRows(els.skincareBars, rows, 'No skincare data yet — log what you used on a few rated days to see patterns.');
+  const rows = correlationRows(rated, 'skincare').filter(r => r.n >= 3).sort((a,b) => a.avgWith - b.avgWith);
+  renderCorrRows(els.skincareBars, rows, "Not enough repeats yet — once a product's been used on 3+ different rated days, it'll show up here with a real comparison.");
 }
 
 function renderSummaryInsight(){
