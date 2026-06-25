@@ -950,58 +950,47 @@ function correlationRows(rated, key){
     const withoutIt = rated.filter(e => !(e[key]||[]).includes(item));
     const avgWith = withIt.length ? withIt.reduce((s,e)=>s+e.rating,0)/withIt.length : 0;
     const avgWithout = withoutIt.length ? withoutIt.reduce((s,e)=>s+e.rating,0)/withoutIt.length : 0;
-    return { item, avgWith, avgWithout, n: withIt.length };
+    return { item, avgWith, avgWithout, n: withIt.length, diff: avgWith - avgWithout };
   });
 }
 
-function renderCorrRows(container, rows, emptyMsg){
+// Diverging delta bar: one bar per row, growing left (calmer) or right (worse) from a center
+// line, scaled against the larger of the two panels so a "+1.0" reads the same length everywhere.
+function renderDeltaRows(container, rows, maxAbs, emptyMsg){
   container.innerHTML = '';
   if (rows.length === 0){
     container.innerHTML = `<p class="routine-empty">${emptyMsg}</p>`;
     return;
   }
-  const legend = document.createElement('div');
-  legend.className = 'corr-legend';
-  legend.innerHTML = `<span><span class="dot with"></span>days with this</span><span><span class="dot without"></span>days without</span>`;
-  container.appendChild(legend);
-
-  const pct = v => ((Math.max(1, Math.min(5, v)) - 1) / 4) * 100;
+  const axis = document.createElement('div');
+  axis.className = 'delta-axis';
+  axis.innerHTML = `<span></span><span>calmer ←</span><span>→ worse</span>`;
+  container.appendChild(axis);
 
   rows.forEach(r => {
-    const pWith = pct(r.avgWith), pWithout = pct(r.avgWithout);
-    const left = Math.min(pWith, pWithout), width = Math.abs(pWith - pWithout);
-    const diff = r.avgWith - r.avgWithout;
-    const deltaClass = diff > 0.05 ? 'worse' : (diff < -0.05 ? 'calmer' : 'flat');
-    const deltaWord = diff > 0.05 ? 'worse' : (diff < -0.05 ? 'calmer' : 'about the same');
+    const isWorse = r.diff > 0.05;
+    const isCalmer = r.diff < -0.05;
+    const cls = isWorse ? 'worse' : (isCalmer ? 'calmer' : '');
+    const halfPct = (Math.abs(r.diff) / maxAbs) * 50;
+    const fillStyle = r.diff >= 0 ? `left:50%; width:${halfPct}%;` : `left:${50 - halfPct}%; width:${halfPct}%;`;
 
     const row = document.createElement('div');
-    row.className = 'corr-row';
+    row.className = 'delta-row';
     row.innerHTML = `
-      <div class="corr-name">${r.item.replace(/-/g,' ')}</div>
-      <div class="corr-track-wrap">
-        <div class="corr-track-line"></div>
-        <span class="corr-tick corr-tick-start">1</span>
-        <span class="corr-tick corr-tick-end">5</span>
-        <div class="corr-bridge" style="left:${left}%; width:${width}%"></div>
-        <div class="corr-dot without" style="left:${pWithout}%" title="without: ${r.avgWithout.toFixed(1)}"></div>
-        <div class="corr-dot with" style="left:${pWith}%" title="with: ${r.avgWith.toFixed(1)}"></div>
+      <div class="delta-name">${r.item.replace(/-/g,' ')}</div>
+      <div class="delta-bar-wrap">
+        <div class="delta-center-line"></div>
+        <div class="delta-fill ${cls}" style="${fillStyle}"></div>
       </div>
-      <p class="corr-delta ${deltaClass}"><span class="amt">${diff > 0 ? '+' : ''}${diff.toFixed(1)}</span> ${deltaWord} on the ${r.n} day(s) you logged this — avg ${r.avgWith.toFixed(1)} vs ${r.avgWithout.toFixed(1)} without</p>
+      <div class="delta-amt ${cls}">${r.diff > 0 ? '+' : ''}${r.diff.toFixed(1)}</div>
     `;
     container.appendChild(row);
+
+    const note = document.createElement('div');
+    note.className = 'delta-note';
+    note.textContent = `${r.n} day(s) — avg ${r.avgWith.toFixed(1)} with vs ${r.avgWithout.toFixed(1)} without`;
+    container.appendChild(note);
   });
-}
-
-function renderTriggerBars(){
-  const rated = allEntries.filter(e => typeof e.rating === 'number');
-  const rows = correlationRows(rated, 'triggers').filter(r => r.n >= 3).sort((a,b) => b.avgWith - a.avgWith);
-  renderCorrRows(els.triggerBars, rows, "Not enough repeats yet — once a trigger's been logged on 3+ different rated days, it'll show up here with a real comparison.");
-}
-
-function renderSkincareBars(){
-  const rated = allEntries.filter(e => typeof e.rating === 'number');
-  const rows = correlationRows(rated, 'skincare').filter(r => r.n >= 3).sort((a,b) => a.avgWith - b.avgWith);
-  renderCorrRows(els.skincareBars, rows, "Not enough repeats yet — once a product's been used on 3+ different rated days, it'll show up here with a real comparison.");
 }
 
 function renderSummaryInsight(){
@@ -1030,13 +1019,13 @@ function renderSummaryInsight(){
     lines.push(`Your average flare over the last 14 days is ${avgLast.toFixed(1)}.`);
   }
 
-  const trigRows = correlationRows(rated, 'triggers').filter(r => r.n >= 3).sort((a,b) => b.avgWith - a.avgWith);
+  const trigRows = correlationRows(rated, 'triggers').filter(r => r.n >= 3).sort((a,b) => b.diff - a.diff);
   if (trigRows.length){
     const top = trigRows[0];
     lines.push(`The trigger most associated with worse days so far is ${top.item.replace(/-/g,' ')} (avg ${top.avgWith.toFixed(1)} vs ${top.avgWithout.toFixed(1)} without).`);
   }
 
-  const skinRows = correlationRows(rated, 'skincare').filter(r => r.n >= 3).sort((a,b) => a.avgWith - b.avgWith);
+  const skinRows = correlationRows(rated, 'skincare').filter(r => r.n >= 3).sort((a,b) => a.diff - b.diff);
   if (skinRows.length){
     const top = skinRows[0];
     lines.push(`Days using ${top.item.replace(/-/g,' ')} have run calmer on average (${top.avgWith.toFixed(1)} vs ${top.avgWithout.toFixed(1)} without) — worth watching, not proof.`);
@@ -1047,8 +1036,12 @@ function renderSummaryInsight(){
 
 function renderSummary(){
   renderSummaryInsight();
-  renderTriggerBars();
-  renderSkincareBars();
+  const rated = allEntries.filter(e => typeof e.rating === 'number');
+  const trigRows = correlationRows(rated, 'triggers').filter(r => r.n >= 3).sort((a,b) => b.diff - a.diff);
+  const skinRows = correlationRows(rated, 'skincare').filter(r => r.n >= 3).sort((a,b) => a.diff - b.diff);
+  const maxAbs = Math.max(1, ...trigRows.map(r => Math.abs(r.diff)), ...skinRows.map(r => Math.abs(r.diff)));
+  renderDeltaRows(els.triggerBars, trigRows, maxAbs, "Not enough repeats yet — once a trigger's been logged on 3+ different rated days, it'll show up here with a real comparison.");
+  renderDeltaRows(els.skincareBars, skinRows, maxAbs, "Not enough repeats yet — once a product's been used on 3+ different rated days, it'll show up here with a real comparison.");
 }
 
 /* ============================================================
